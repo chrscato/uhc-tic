@@ -1,0 +1,21 @@
+{
+  "url": "https://d25kgz5rikkq4n.cloudfront.net/cost_transparency/mrf/in-network-rates/reporting_month=2025-08/2025-08-01_cigna-health-life-insurance-company_michigan-gppo_in-network-rates.json.gz?Expires=2074651199&Signature=GDEeAoPFywC4qpnUpENQzUllLxo5IbxirQKXbbml6kX6qZCUXVsiTpKFiTVyjKFBLLamOxDULiQ8vg7nPQsCWG3y4NMwtczXXGSciphDyQc1OLiQdo5PwHixSPwqh6AwnSnx8WaaYPqQqO-uIQ8zwNnLTLORA89l9LzoVqurDmnj8zE9tFwI27xNgFKKKpXGkDaxcl2HPr8CTJ1LrgFZUd6rqXioaY5RxpwUPwgjpVZc2b08oNzl3fyUwbywwx0UG5AV8vmzE22BMrx1640SgJL8pTzjJfYkeXHkmDHr6TQ-uud-hS8kV-U~MGts1dKBO42s~RQ5dR4BOlSHKaknMA__&Key-Pair-Id=K1NVBEPVH9LWJP",
+  "schema_type": "in_network",
+  "stats": {
+    "total_records": 0,
+    "provider_records": 0,
+    "rate_records": 0,
+    "unique_npis": 0,
+    "unique_tins": 0,
+    "total_code_records": 0,
+    "whitelisted_code_records": 0,
+    "whitelist_coverage_pct": 0
+  },
+  "provider_references": null,
+  "billing_codes": {
+    "all": {},
+    "whitelisted": {}
+  },
+  "sample_npis": [],
+  "sample_tins": []
+}

@@ -1,0 +1,162 @@
+[
+  {
+    "service_code": "0373T",
+    "billing_code_type": "HCPCS",
+    "description": "EXPOSURE ADAPTIVE BEHAVIOR TREATMENT WITH PROTOCOL MODIFICATION REQUIRING TWO OR MORE TECHNICIANS; FIRST 60 MINS OF TECH",
+    "service_codes": [
+      "81"
+    ],
+    "billing_class": "professional",
+    "negotiated_type": "",
+    "expiration_date": "",
+    "payer": "TEST_PAYER",
+    "negotiated_rate": 23.04,
+    "billing_code_modifier": [],
+    "provider_npi": "1588234231",
+    "provider_tin": "1588234231"
+  },
+  {
+    "service_code": "0373T",
+    "billing_code_type": "HCPCS",
+    "description": "EXPOSURE ADAPTIVE BEHAVIOR TREATMENT WITH PROTOCOL MODIFICATION REQUIRING TWO OR MORE TECHNICIANS; FIRST 60 MINS OF TECH",
+    "service_codes": [
+      "81"
+    ],
+    "billing_class": "professional",
+    "negotiated_type": "",
+    "expiration_date": "",
+    "payer": "TEST_PAYER",
+    "negotiated_rate": 23.04,
+    "billing_code_modifier": [],
+    "provider_npi": "1063905214",
+    "provider_tin": "1225206105"
+  },
+  {
+    "service_code": "0373T",
+    "billing_code_type": "HCPCS",
+    "description": "EXPOSURE ADAPTIVE BEHAVIOR TREATMENT WITH PROTOCOL MODIFICATION REQUIRING TWO OR MORE TECHNICIANS; FIRST 60 MINS OF TECH",
+    "service_codes": [
+      "81"
+    ],
+    "billing_class": "professional",
+    "negotiated_type": "",
+    "expiration_date": "",
+    "payer": "TEST_PAYER",
+    "negotiated_rate": 23.04,
+    "billing_code_modifier": [],
+    "provider_npi": "1225206105",
+    "provider_tin": "1225206105"
+  },
+  {
+    "service_code": "0373T",
+    "billing_code_type": "HCPCS",
+    "description": "EXPOSURE ADAPTIVE BEHAVIOR TREATMENT WITH PROTOCOL MODIFICATION REQUIRING TWO OR MORE TECHNICIANS; FIRST 60 MINS OF TECH",
+    "service_codes": [
+      "81"
+    ],
+    "billing_class": "professional",
+    "negotiated_type": "",
+    "expiration_date": "",
+    "payer": "TEST_PAYER",
+    "negotiated_rate": 23.04,
+    "billing_code_modifier": [],
+    "provider_npi": "1467469429",
+    "provider_tin": "1225206105"
+  },
+  {
+    "service_code": "0373T",
+    "billing_code_type": "HCPCS",
+    "description": "EXPOSURE ADAPTIVE BEHAVIOR TREATMENT WITH PROTOCOL MODIFICATION REQUIRING TWO OR MORE TECHNICIANS; FIRST 60 MINS OF TECH",
+    "service_codes": [
+      "81"
+    ],
+    "billing_class": "professional",
+    "negotiated_type": "",
+    "expiration_date": "",
+    "payer": "TEST_PAYER",
+    "negotiated_rate": 23.04,
+    "billing_code_modifier": [],
+    "provider_npi": "1316291040",
+    "provider_tin": "1316291040"
+  },
+  {
+    "service_code": "0373T",
+    "billing_code_type": "HCPCS",
+    "description": "EXPOSURE ADAPTIVE BEHAVIOR TREATMENT WITH PROTOCOL MODIFICATION REQUIRING TWO OR MORE TECHNICIANS; FIRST 60 MINS OF TECH",
+    "service_codes": [
+      "81"
+    ],
+    "billing_class": "professional",
+    "negotiated_type": "",
+    "expiration_date": "",
+    "payer": "TEST_PAYER",
+    "negotiated_rate": 23.04,
+    "billing_code_modifier": [],
+    "provider_npi": "1689707903",
+    "provider_tin": "1316291040"
+  },
+  {
+    "service_code": "0373T",
+    "billing_code_type": "HCPCS",
+    "description": "EXPOSURE ADAPTIVE BEHAVIOR TREATMENT WITH PROTOCOL MODIFICATION REQUIRING TWO OR MORE TECHNICIANS; FIRST 60 MINS OF TECH",
+    "service_codes": [
+      "81"
+    ],
+    "billing_class": "professional",
+    "negotiated_type": "",
+    "expiration_date": "",
+    "payer": "TEST_PAYER",
+    "negotiated_rate": 23.04,
+    "billing_code_modifier": [],
+    "provider_npi": "1487825246",
+    "provider_tin": "1316291040"
+  },
+  {
+    "service_code": "0373T",
+    "billing_code_type": "HCPCS",
+    "description": "EXPOSURE ADAPTIVE BEHAVIOR TREATMENT WITH PROTOCOL MODIFICATION REQUIRING TWO OR MORE TECHNICIANS; FIRST 60 MINS OF TECH",
+    "service_codes": [
+      "81"
+    ],
+    "billing_class": "professional",
+    "negotiated_type": "",
+    "expiration_date": "",
+    "payer": "TEST_PAYER",
+    "negotiated_rate": 23.04,
+    "billing_code_modifier": [],
+    "provider_npi": "1043421829",
+    "provider_tin": "1316291040"
+  },
+  {
+    "service_code": "0373T",
+    "billing_code_type": "HCPCS",
+    "description": "EXPOSURE ADAPTIVE BEHAVIOR TREATMENT WITH PROTOCOL MODIFICATION REQUIRING TWO OR MORE TECHNICIANS; FIRST 60 MINS OF TECH",
+    "service_codes": [
+      "81"
+    ],
+    "billing_class": "professional",
+    "negotiated_type": "",
+    "expiration_date": "",
+    "payer": "TEST_PAYER",
+    "negotiated_rate": 23.04,
+    "billing_code_modifier": [],
+    "provider_npi": "1376971705",
+    "provider_tin": "1316291040"
+  },
+  {
+    "service_code": "0373T",
+    "billing_code_type": "HCPCS",
+    "description": "EXPOSURE ADAPTIVE BEHAVIOR TREATMENT WITH PROTOCOL MODIFICATION REQUIRING TWO OR MORE TECHNICIANS; FIRST 60 MINS OF TECH",
+    "service_codes": [
+      "81"
+    ],
+    "billing_class": "professional",
+    "negotiated_type": "",
+    "expiration_date": "",
+    "payer": "TEST_PAYER",
+    "negotiated_rate": 23.04,
+    "billing_code_modifier": [],
+    "provider_npi": "1184760514",
+    "provider_tin": "1578808234"
+  }
+]

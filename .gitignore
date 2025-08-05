@@ -1,0 +1,107 @@
+# Environment variables and secrets
+.env
+*.env
+.env.*
+secrets.yaml
+config.local.yaml
+env.*
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Virtual Environment
+venv/
+env/
+ENV/
+.venv/
+.env/
+
+# 🚫 Ignore large or auto-generated data files
+*.csv
+*.json
+*.parquet
+*.zip
+*.tar.gz
+*.xlsx
+*.tsv
+*.pkl
+*.joblib
+*.h5
+*.model
+*.log
+*.sql
+
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+
+# Project specific
+output/
+*.parquet
+*.log
+logs/
+.coverage
+htmlcov/
+.pytest_cache/
+production_data/
+debug_output/
+json_analysis/
+mrf_analysis/
+structure_analysis/
+ortho_radiology_data/
+
+# AWS
+.aws/
+aws.json
+credentials.json
+
+# Jupyter Notebook
+.ipynb_checkpoints
+*.ipynb
+# Exception for specific notebooks
+!scripts\transform_visual.ipynb
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg 
+*.csv
+dashboard_data/dashboard_data/
+dashboard_data/
+*.csv
