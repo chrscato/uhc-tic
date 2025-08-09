@@ -80,7 +80,7 @@ credentials.json
 
 # Jupyter Notebook
 .ipynb_checkpoints
-*.ipynb
+.ipynb
 # Exception for specific notebooks
 !scripts\transform_visual.ipynb
 
