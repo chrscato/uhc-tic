@@ -1,2 +1,0 @@
-mrf_samples/*.json filter=lfs diff=lfs merge=lfs -text
-payer_structure_analysis/*.json filter=lfs diff=lfs merge=lfs -text

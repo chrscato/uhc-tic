@@ -11,6 +11,8 @@ import requests
 import gc
 import psutil
 import os
+import ijson
+import tempfile
 from typing import Dict, Any, List, Set, Optional
 from dataclasses import dataclass
 from datetime import datetime
@@ -34,11 +36,12 @@ class MemoryEfficientProcessor:
         self.billing_code_whitelist = billing_code_whitelist or set()
         self.tin_value_whitelist = tin_value_whitelist or set()
         
-        # Memory-efficient storage
+        # Memory-efficient storage with separate batch sizes
         self.rates_batch = []
         self.providers_batch = []
         self.provider_reference_cache = {}
-        self.batch_size = 1000  # Process in smaller batches
+        self.provider_batch_size = 100  # Process all providers in one larger batch
+        self.rates_batch_size = 5       # Process rates in very small batches for more frequent writes
         
         # Progress tracking
         self.stats = {
@@ -123,13 +126,9 @@ class MemoryEfficientProcessor:
             elif item_idx % 50 == 0:  # Progress update for non-tqdm users
                 print(f"  Processed {item_idx+1}/{total_items} items, {rates_written} rates, {self.get_memory_usage():.0f}MB")
             
-            # Write batches to save memory
-            if len(self.rates_batch) >= self.batch_size:
+            # Write when rates batch size is reached
+            if len(self.rates_batch) >= self.rates_batch_size:
                 self._write_batch(rates_path, providers_path)
-        
-        # Write final batch
-        if self.rates_batch:
-            self._write_batch(rates_path, providers_path)
         
         # Final statistics
         elapsed = (datetime.now() - self.stats["start_time"]).total_seconds()
@@ -158,7 +157,7 @@ class MemoryEfficientProcessor:
             "processing_timestamp": datetime.now().isoformat()
         }
     
-    def _process_providers_streaming(self, provider_refs: List[Dict], file_metadata: Dict):
+    def _process_providers_streaming(self, provider_refs: List[Dict], file_metadata: Dict, providers_path: Path):
         """Process provider references in memory-efficient way."""
         if TQDM_AVAILABLE:
             pbar = tqdm(provider_refs, desc="Providers", unit="ref", leave=False)
@@ -196,6 +195,9 @@ class MemoryEfficientProcessor:
                     }
                     self.providers_batch.append(provider_record)
                     self.stats["providers_created"] += 1
+                    # Write when provider batch size is reached
+                    if len(self.providers_batch) >= self.provider_batch_size:
+                        self._write_batch(None, providers_path)
     
     def _process_single_item(self, item: Dict[str, Any], file_metadata: Dict) -> int:
         """Process a single in_network item efficiently."""
@@ -266,27 +268,41 @@ class MemoryEfficientProcessor:
                 return uuid_val
         return str(uuid.uuid4())  # Fallback
     
-    def _write_batch(self, rates_path: Path, providers_path: Path):
-        """Write current batches to parquet and clear memory."""
-        if self.rates_batch:
-            # Convert to DataFrame and append
-            rates_df = pd.DataFrame(self.rates_batch)
-            if rates_path.exists():
-                existing_df = pd.read_parquet(rates_path)
-                rates_df = pd.concat([existing_df, rates_df], ignore_index=True)
-            rates_df.to_parquet(rates_path, index=False)
-            self.rates_batch.clear()  # Free memory
+    def _write_batch(self, rates_path: Optional[Path], providers_path: Optional[Path]):
+        """Write batches to parquet and clear memory."""
+        if rates_path and self.rates_batch:
+            # Write entire batch of rate records
+            rate_df = pd.DataFrame(self.rates_batch)  # Convert batch to DataFrame
+            try:
+                if rates_path.exists() and rates_path.stat().st_size > 0:
+                    # Read existing and append batch efficiently
+                    existing_df = pd.read_parquet(rates_path)
+                    rate_df = pd.concat([existing_df, rate_df], ignore_index=True)
+            except (OSError, pd.errors.EmptyDataError):
+                pass  # Handle first write or empty file
+            
+            # Write and clear memory
+            rate_df.to_parquet(rates_path, index=False)
+            self.rates_batch.clear()
+            del rate_df  # Explicitly remove DataFrame from memory
         
-        if self.providers_batch:
-            # Convert to DataFrame and append
-            providers_df = pd.DataFrame(self.providers_batch)
-            if providers_path.exists():
-                existing_df = pd.read_parquet(providers_path)
-                providers_df = pd.concat([existing_df, providers_df], ignore_index=True)
-            providers_df.to_parquet(providers_path, index=False)
-            self.providers_batch.clear()  # Free memory
+        if providers_path and self.providers_batch:
+            # Write entire batch of provider records
+            provider_df = pd.DataFrame(self.providers_batch)  # Convert batch to DataFrame
+            try:
+                if providers_path.exists() and providers_path.stat().st_size > 0:
+                    # Read existing and append batch efficiently
+                    existing_df = pd.read_parquet(providers_path)
+                    provider_df = pd.concat([existing_df, provider_df], ignore_index=True)
+            except (OSError, pd.errors.EmptyDataError):
+                pass  # Handle first write or empty file
+            
+            # Write and clear memory
+            provider_df.to_parquet(providers_path, index=False)
+            self.providers_batch.clear()
+            del provider_df  # Explicitly remove DataFrame from memory
         
-        # Force garbage collection
+        # Force garbage collection after batch write
         gc.collect()
 
 def process_with_progress_bars(source_url: str, max_items: Optional[int] = 100,
@@ -297,6 +313,10 @@ def process_with_progress_bars(source_url: str, max_items: Optional[int] = 100,
     """
     print("🔧 MEMORY-EFFICIENT MRF PROCESSOR")
     print("=" * 60)
+    
+    # Setup output directory
+    output_dir = Path("output/memory_efficient_processing")
+    output_dir.mkdir(parents=True, exist_ok=True)
     
     # Configuration display
     print("🔍 CONFIGURATION:")
@@ -313,22 +333,83 @@ def process_with_progress_bars(source_url: str, max_items: Optional[int] = 100,
     
     print(f"📦 Downloaded {len(response.content) / 1024**2:.1f} MB")
     
-    # Parse JSON
+    # Stream and parse JSON using temporary file to avoid memory issues
     print(f"🔓 Decompressing and parsing...")
-    if source_url.endswith('.gz'):
-        with gzip.GzipFile(fileobj=BytesIO(response.content)) as gz:
-            data = json.load(gz)
-    else:
-        data = json.loads(response.content.decode('utf-8'))
     
-    # Process with memory efficiency
-    processor = MemoryEfficientProcessor(
-        billing_code_whitelist=billing_code_whitelist,
-        tin_value_whitelist=tin_value_whitelist
-    )
+    # Save response content to temporary file to enable streaming
+    with tempfile.NamedTemporaryFile(delete=False, suffix='.gz' if source_url.endswith('.gz') else '') as temp_file:
+        temp_file.write(response.content)
+        temp_path = temp_file.name
     
-    output_dir = Path("output/memory_efficient_processing")
-    stats = processor.process_mrf_streaming(data, output_dir, max_items)
+    try:
+        # Process the file in streaming mode
+        if source_url.endswith('.gz'):
+            with gzip.open(temp_path, 'rb') as gz_file:
+                # Extract metadata first (small memory footprint)
+                metadata = {}
+                parser = ijson.parse(gz_file)
+                for prefix, event, value in parser:
+                    if prefix in ['reporting_entity_name', 'reporting_entity_type', 'last_updated_on', 'version']:
+                        metadata[prefix] = value
+                    elif prefix == 'in_network':
+                        break
+                
+                # Reset file pointer for main processing
+                gz_file.seek(0)
+                
+                # Create processor first
+                processor = MemoryEfficientProcessor(
+                    billing_code_whitelist=billing_code_whitelist,
+                    tin_value_whitelist=tin_value_whitelist
+                )
+
+                # Stream the provider references
+                print(f"👥 Processing provider references...")
+                provider_refs = ijson.items(gz_file, 'provider_references.item')
+                providers_path = output_dir / "providers_normalized.parquet"
+                processor._process_providers_streaming(provider_refs, metadata, providers_path)
+                
+                # Reset file pointer for in_network processing
+                gz_file.seek(0)
+                
+                # Stream the in_network items
+                in_network_stream = ijson.items(gz_file, 'in_network.item')
+                data = {'in_network': in_network_stream, **metadata}
+        else:
+            with open(temp_path, 'rb') as json_file:
+                # Similar process for uncompressed JSON
+                metadata = {}
+                parser = ijson.parse(json_file)
+                for prefix, event, value in parser:
+                    if prefix in ['reporting_entity_name', 'reporting_entity_type', 'last_updated_on', 'version']:
+                        metadata[prefix] = value
+                    elif prefix == 'in_network':
+                        break
+                
+                json_file.seek(0)
+                
+                # Create processor first
+                processor = MemoryEfficientProcessor(
+                    billing_code_whitelist=billing_code_whitelist,
+                    tin_value_whitelist=tin_value_whitelist
+                )
+                
+                provider_refs = ijson.items(json_file, 'provider_references.item')
+                providers_path = output_dir / "providers_normalized.parquet"
+                processor._process_providers_streaming(provider_refs, metadata, providers_path)
+                
+                json_file.seek(0)
+                in_network_stream = ijson.items(json_file, 'in_network.item')
+                data = {'in_network': in_network_stream, **metadata}
+        
+        # Process the streaming data
+        stats = processor.process_mrf_streaming(data, output_dir, max_items)
+    finally:
+        # Clean up temporary file
+        try:
+            os.unlink(temp_path)
+        except Exception:
+            pass  # Ignore cleanup errors
     
     # Load and return final results
     rates_df = pd.read_parquet(output_dir / "rates_normalized.parquet")
@@ -338,7 +419,7 @@ def process_with_progress_bars(source_url: str, max_items: Optional[int] = 100,
 
 if __name__ == "__main__":
     # Configuration for testing
-    url = "https://mrfstorageprod.blob.core.windows.net/public-mrf/2025-08-01/2025-08-01_UnitedHealthcare-of-Georgia--Inc-_Insurer_PPO---NDC_PPO-NDC_in-network-rates.json.gz"
+    url = "https://mrfstorageprod.blob.core.windows.net/public-mrf/2025-08-01/2025-08-01_UnitedHealthcare-of-Georgia--Inc-_Insurer_Choice-Plus-POS_8_in-network-rates.json.gz"
     
     # Test with real TINs from the data
     test_tins = {
@@ -356,7 +437,7 @@ if __name__ == "__main__":
         url,
         max_items=100,  # Good balance for laptop testing
         billing_code_whitelist=None,  # No billing filter
-        tin_value_whitelist=test_tins  # TIN filter only
+        tin_value_whitelist=None  # TIN filter only
     )
     
     print(f"\n🎉 SUCCESS!")

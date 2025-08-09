@@ -1,29 +1,18 @@
 #!/usr/bin/env python3
-"""NPPES Provider Information Management Script using NPI Registry API."""
+"""Simplified NPPES Provider Information Backfill Script."""
 
 import os
 import json
 import time
 import requests
 import pandas as pd
-import boto3
 from pathlib import Path
 from datetime import datetime, timezone
-from typing import Dict, List, Any, Optional, Iterator
+from typing import Dict, List, Any, Optional
 from dataclasses import dataclass
-from concurrent.futures import ThreadPoolExecutor, as_completed
 import logging
-import structlog
 from tqdm import tqdm
-import yaml
 import argparse
-
-# Load environment variables from .env file
-try:
-    from dotenv import load_dotenv
-    load_dotenv()
-except ImportError:
-    print("python-dotenv not installed, using system environment variables")
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -38,20 +27,12 @@ class NPPESConfig:
     request_delay: float = 0.1  # Delay between requests to be respectful
     
     # Processing Configuration
-    batch_size: int = 100
-    max_workers: int = 5
     max_retries: int = 3
     retry_delay: float = 1.0
     
-    # Storage Configuration
-    s3_bucket: Optional[str] = None  # Will be set from environment variable
-    s3_prefix: str = ""  # Will be set by user
-    local_data_dir: str = "output/providers_20250806_181227.parquet"  # Direct path to specific providers file
-    local_base_pattern: str = "ortho_radiology_data_"  # Pattern to match payer directories (not used in direct file mode)
-    
-    # NPPES Data Configuration
-    nppes_data_dir: str = "nppes_data"
-    nppes_filename: str = "nppes_providers.parquet"
+    # File Configuration
+    input_providers_file: str = "output/providers_20250806_181227.parquet"
+    nppes_output_file: str = "nppes_data/nppes_providers.parquet"
     
     # Quality Control
     min_success_rate: float = 0.95
@@ -115,146 +96,27 @@ class NPIAPIClient:
         
         return results
 
-class NPPESDataManager:
-    """Manages NPPES provider data as a separate, joinable dataset."""
+class NPPESBackfill:
+    """Simplified NPPES backfill processor."""
     
     def __init__(self, config: NPPESConfig):
         self.config = config
         self.api_client = NPIAPIClient(config)
-        self.s3_client = boto3.client('s3') if config.s3_bucket else None
         
-        # Create NPPES data directory
-        Path(config.nppes_data_dir).mkdir(parents=True, exist_ok=True)
-        
-        # NPPES file path
-        self.nppes_file = Path(config.nppes_data_dir) / config.nppes_filename
+        # Ensure output directory exists
+        Path(self.config.nppes_output_file).parent.mkdir(parents=True, exist_ok=True)
     
-    def load_existing_nppes_data(self) -> pd.DataFrame:
-        """Load existing NPPES data if available."""
-        if self.nppes_file.exists():
-            logger.info(f"Loading existing NPPES data from {self.nppes_file}")
-            return pd.read_parquet(self.nppes_file)
-        else:
-            logger.info("No existing NPPES data found. Starting fresh.")
-            return pd.DataFrame()
-    
-    def extract_npis_from_provider_data(self) -> List[str]:
-        """Extract unique NPIs from existing provider data."""
-        logger.info("Extracting NPIs from existing provider data...")
+    def extract_npis_from_file(self) -> List[str]:
+        """Extract unique NPIs from the input providers file."""
+        input_file = Path(self.config.input_providers_file)
         
-        if self.s3_client:
-            return self._extract_npis_from_s3()
-        else:
-            return self._extract_npis_from_local()
-    
-    def _extract_npis_from_s3(self) -> List[str]:
-        """Extract NPIs from S3 provider data with payer/date partitioning."""
-        # List all files in the S3 prefix
-        paginator = self.s3_client.get_paginator('list_objects_v2')
-        pages = paginator.paginate(
-            Bucket=self.config.s3_bucket,
-            Prefix=self.config.s3_prefix
-        )
+        if not input_file.exists():
+            raise ValueError(f"Input providers file not found: {input_file}")
         
-        all_files = []
-        for page in pages:
-            if 'Contents' in page:
-                all_files.extend([obj['Key'] for obj in page['Contents']])
-        
-        if not all_files:
-            raise ValueError(f"No files found in S3 bucket {self.config.s3_bucket} with prefix {self.config.s3_prefix}")
-        
-        logger.info(f"Found {len(all_files)} total files in S3")
-        
-        # Filter for provider files in the consolidated structure
-        # Expected structure: {prefix}/consolidated/{payer}/providers*.parquet
-        provider_files = []
-        for file_key in all_files:
-            # Check if it's a provider file in the consolidated structure
-            if (file_key.endswith('.parquet') and 
-                'providers' in file_key.lower()):
-                provider_files.append(file_key)
-        
-        if not provider_files:
-            logger.warning(f"No provider files found in S3. Available files: {[f.split('/')[-1] for f in all_files[:10]]}")
-            # Fallback: look for any files with 'providers' in the name
-            provider_files = [f for f in all_files if 'providers' in f and f.endswith('.parquet')]
-            if not provider_files:
-                raise ValueError("No provider files found in S3")
-        
-        logger.info(f"Found {len(provider_files)} provider files in S3")
-        
-        # Group files by payer for better logging
-        payer_files = {}
-        for s3_key in provider_files:
-            # Extract payer from path like: tic-mrf/consolidated/bcbs_il/providers.parquet
-            parts = s3_key.split('/')
-            # The payer should be the directory after 'consolidated'
-            try:
-                consolidated_index = parts.index('consolidated')
-                if len(parts) > consolidated_index + 1:
-                    payer_part = parts[consolidated_index + 1]
-                else:
-                    payer_part = None
-            except ValueError:
-                payer_part = None
-            
-            if payer_part:
-                if payer_part not in payer_files:
-                    payer_files[payer_part] = []
-                payer_files[payer_part].append(s3_key)
-            else:
-                # Fallback for non-partitioned files
-                if 'unknown' not in payer_files:
-                    payer_files['unknown'] = []
-                payer_files['unknown'].append(s3_key)
-        
-        logger.info(f"Provider files by payer: {list(payer_files.keys())}")
-        
-        # Extract NPIs from all provider files
-        all_npis = set()
-        for payer, files in payer_files.items():
-            logger.info(f"Processing {len(files)} files for payer: {payer}")
-            
-            for s3_key in tqdm(files, desc=f"Extracting NPIs from {payer}"):
-                temp_file = Path(self.config.nppes_data_dir) / f"temp_{hash(s3_key)}.parquet"
-                
-                try:
-                    logger.debug(f"Downloading {s3_key} to {temp_file}")
-                    self.s3_client.download_file(self.config.s3_bucket, s3_key, str(temp_file))
-                    df = pd.read_parquet(temp_file)
-                    
-                    # Check for NPI column (could be 'npi', 'provider_npi', etc.)
-                    npi_columns = [col for col in df.columns if 'npi' in col.lower()]
-                    if npi_columns:
-                        npi_col = npi_columns[0]
-                        npis = df[npi_col].dropna().astype(str).tolist()
-                        all_npis.update(npis)
-                        logger.debug(f"Found {len(npis)} NPIs in {s3_key}")
-                    else:
-                        logger.warning(f"No NPI column found in {s3_key}. Available columns: {list(df.columns)}")
-                        
-                except Exception as e:
-                    logger.error(f"Error processing {s3_key}: {str(e)}")
-                finally:
-                    if temp_file.exists():
-                        temp_file.unlink()
-        
-        logger.info(f"Total unique NPIs found: {len(all_npis)}")
-        return list(all_npis)
-    
-    def _extract_npis_from_local(self) -> List[str]:
-        """Extract NPIs from local provider data."""
-        # Direct path to the specific providers parquet file
-        providers_file = Path(self.config.local_data_dir)
-        
-        if not providers_file.exists():
-            raise ValueError(f"Providers file not found: {providers_file}")
-        
-        logger.info(f"Processing providers from: {providers_file}")
+        logger.info(f"Reading providers from: {input_file}")
         
         try:
-            df = pd.read_parquet(providers_file)
+            df = pd.read_parquet(input_file)
             logger.info(f"Loaded providers file with {len(df)} records")
             
             # Check for NPI column (could be 'npi', 'provider_npi', etc.)
@@ -262,16 +124,27 @@ class NPPESDataManager:
             if npi_columns:
                 npi_col = npi_columns[0]
                 npis = df[npi_col].dropna().astype(str).tolist()
-                logger.info(f"Found {len(npis)} NPIs in {providers_file.name}")
+                unique_npis = list(set(npis))  # Remove duplicates
+                logger.info(f"Found {len(unique_npis)} unique NPIs in {input_file.name}")
                 logger.debug(f"Available columns: {list(df.columns)}")
-                return list(set(npis))  # Remove duplicates
+                return unique_npis
             else:
-                logger.warning(f"No NPI column found in {providers_file.name}. Available columns: {list(df.columns)}")
+                logger.warning(f"No NPI column found in {input_file.name}. Available columns: {list(df.columns)}")
                 return []
                 
         except Exception as e:
-            logger.error(f"Error processing {providers_file}: {str(e)}")
+            logger.error(f"Error processing {input_file}: {str(e)}")
             raise
+    
+    def load_existing_nppes_data(self) -> pd.DataFrame:
+        """Load existing NPPES data if available."""
+        nppes_file = Path(self.config.nppes_output_file)
+        if nppes_file.exists():
+            logger.info(f"Loading existing NPPES data from {nppes_file}")
+            return pd.read_parquet(nppes_file)
+        else:
+            logger.info("No existing NPPES data found. Starting fresh.")
+            return pd.DataFrame()
     
     def get_new_npis(self, existing_nppes_df: pd.DataFrame, all_npis: List[str]) -> List[str]:
         """Get NPIs that are not already in the NPPES dataset."""
@@ -310,7 +183,7 @@ class NPPESDataManager:
         
         # Log failed NPIs if requested
         if self.config.log_failed_npis and failed_npis:
-            failed_file = Path(self.config.nppes_data_dir) / "failed_npis.json"
+            failed_file = Path(self.config.nppes_output_file).parent / "failed_npis.json"
             with open(failed_file, 'w') as f:
                 json.dump(failed_npis, f, indent=2)
             logger.warning(f"Failed to fetch {len(failed_npis)} NPIs. See {failed_file}")
@@ -431,18 +304,19 @@ class NPPESDataManager:
             combined_data = combined_data.drop_duplicates(subset=['npi'], keep='last')
         
         # Save the updated dataset
-        combined_data.to_parquet(self.nppes_file, index=False, compression='snappy')
+        combined_data.to_parquet(self.config.nppes_output_file, index=False, compression='snappy')
         
         logger.info(f"NPPES dataset updated: {len(combined_data)} total records")
-        logger.info(f"NPPES file saved to: {self.nppes_file}")
+        logger.info(f"NPPES file saved to: {self.config.nppes_output_file}")
     
     def generate_summary_stats(self):
         """Generate summary statistics for the NPPES dataset."""
-        if not self.nppes_file.exists():
+        nppes_file = Path(self.config.nppes_output_file)
+        if not nppes_file.exists():
             logger.warning("No NPPES dataset found to generate statistics")
             return
         
-        df = pd.read_parquet(self.nppes_file)
+        df = pd.read_parquet(nppes_file)
         
         stats = {
             'total_providers': len(df),
@@ -458,25 +332,29 @@ class NPPESDataManager:
         }
         
         # Save statistics
-        stats_file = Path(self.config.nppes_data_dir) / "nppes_statistics.json"
+        stats_file = Path(self.config.nppes_output_file).parent / "nppes_statistics.json"
         with open(stats_file, 'w') as f:
             json.dump(stats, f, indent=2, default=str)
         
         logger.info(f"NPPES statistics saved to: {stats_file}")
         logger.info(f"Summary: {stats['total_providers']} total providers in NPPES dataset")
     
-    def run_nppes_update(self):
-        """Run the complete NPPES data update process."""
-        logger.info("Starting NPPES data update process...")
+    def run_backfill(self):
+        """Run the complete NPPES backfill process."""
+        logger.info("Starting NPPES backfill process...")
         
         start_time = time.time()
         
         try:
+            # Extract NPIs from input file
+            all_npis = self.extract_npis_from_file()
+            
+            if not all_npis:
+                logger.warning("No NPIs found in input file")
+                return
+            
             # Load existing NPPES data
             existing_nppes_df = self.load_existing_nppes_data()
-            
-            # Extract NPIs from provider data
-            all_npis = self.extract_npis_from_provider_data()
             
             # Get new NPIs that need to be fetched
             new_npis = self.get_new_npis(existing_nppes_df, all_npis)
@@ -495,59 +373,45 @@ class NPPESDataManager:
             self.generate_summary_stats()
             
             elapsed_time = time.time() - start_time
-            logger.info(f"NPPES update completed in {elapsed_time:.2f} seconds")
+            logger.info(f"NPPES backfill completed in {elapsed_time:.2f} seconds")
             
         except Exception as e:
-            logger.error(f"NPPES update failed: {str(e)}")
+            logger.error(f"NPPES backfill failed: {str(e)}")
             raise
-                                                                                                                                                                                                                                                                                                                    
-def create_nppes_config(limit: Optional[int] = None) -> NPPESConfig:
-    """Create NPPES configuration from environment or defaults."""
-    s3_bucket = os.getenv("S3_BUCKET")
-    s3_prefix = os.getenv("S3_PREFIX")
-    local_data_dir = os.getenv("LOCAL_DATA_DIR", ".")
-    local_base_pattern = os.getenv("LOCAL_BASE_PATTERN", "ortho_radiology_data_")
-    nppes_data_dir = os.getenv("NPPES_DATA_DIR", "nppes_data")
-
-    return NPPESConfig(
-        s3_bucket=s3_bucket,
-        s3_prefix=s3_prefix,
-        local_data_dir=local_data_dir,
-        local_base_pattern=local_base_pattern,
-        nppes_data_dir=nppes_data_dir,
-        batch_size=int(os.getenv("BATCH_SIZE", "100")),
-        max_workers=int(os.getenv("MAX_WORKERS", "5")),
-        request_delay=float(os.getenv("REQUEST_DELAY", "0.1")),
-        max_retries=int(os.getenv("MAX_RETRIES", "3")),
-        limit=limit
-    )
 
 def main():
-    """Main entry point for NPPES data management script."""
-    # Parse command line arguments
+    """Main entry point for NPPES backfill script."""
     parser = argparse.ArgumentParser(
-        description="NPPES Provider Information Management Script",
+        description="Simplified NPPES Provider Information Backfill Script",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Run with default providers file
-  python scripts/backfill_provider_info.py --limit 500
+  # Run with default settings
+  python src/nppes_backfill.py
   
-  # Run with custom providers file
-  python scripts/backfill_provider_info.py --local-data-dir path/to/providers.parquet --limit 500
+  # Run with custom input file
+  python src/nppes_backfill.py --input-file path/to/providers.parquet
   
-  # Run with S3 data (bucket from .env, default prefix)
-  python scripts/backfill_provider_info.py --s3-prefix my-data/providers --limit 500
-  
-  # Run with custom S3 bucket and prefix
-  python scripts/backfill_provider_info.py --s3-bucket my-bucket --s3-prefix my-data/providers --limit 500
-  
-  # Test with very small sample
-  python scripts/backfill_provider_info.py --limit 50
+  # Test with small sample
+  python src/nppes_backfill.py --limit 50
   
   # Run with custom settings
-  python scripts/backfill_provider_info.py --limit 1000 --request-delay 0.2
+  python src/nppes_backfill.py --limit 1000 --request-delay 0.2
         """
+    )
+    
+    parser.add_argument(
+        '--input-file',
+        type=str,
+        default='output/providers_20250806_181227.parquet',
+        help='Path to input providers parquet file (default: output/providers_20250806_181227.parquet)'
+    )
+    
+    parser.add_argument(
+        '--output-file',
+        type=str,
+        default='nppes_data/nppes_providers.parquet',
+        help='Path to output NPPES parquet file (default: nppes_data/nppes_providers.parquet)'
     )
     
     parser.add_argument(
@@ -570,96 +434,34 @@ Examples:
         help='Maximum number of retries for failed API requests (default: 3)'
     )
     
-    parser.add_argument(
-        '--batch-size',
-        type=int,
-        default=100,
-        help='Batch size for processing (default: 100)'
-    )
-    
-    parser.add_argument(
-        '--max-workers',
-        type=int,
-        default=5,
-        help='Maximum number of worker threads (default: 5)'
-    )
-    
-    parser.add_argument(
-        '--s3-bucket',
-        type=str,
-        help='S3 bucket name (overrides S3_BUCKET env var)'
-    )
-    
-    parser.add_argument(
-        '--s3-prefix',
-        type=str,
-        default='tic-mrf/consolidated/',
-        help='S3 prefix/path (default: tic-mrf/providers)'
-    )
-    
-    parser.add_argument(
-        '--local-data-dir',
-        type=str,
-        default='output/providers_20250806_181227.parquet',
-        help='Path to providers parquet file (default: output/providers_20250806_181227.parquet)'
-    )
-    
-    parser.add_argument(
-        '--local-base-pattern',
-        type=str,
-        default='ortho_radiology_data_',
-        help='Pattern to match payer directories (default: ortho_radiology_data_)'
-    )
-    
     args = parser.parse_args()
     
     try:
-        # Load configuration with command line overrides
-        config = create_nppes_config(limit=args.limit)
-        
-        # Override config with command line arguments
-        if args.request_delay != 0.1:
-            config.request_delay = args.request_delay
-        if args.max_retries != 3:
-            config.max_retries = args.max_retries
-        if args.batch_size != 100:
-            config.batch_size = args.batch_size
-        if args.max_workers != 5:
-            config.max_workers = args.max_workers
-        if args.s3_bucket:
-            config.s3_bucket = args.s3_bucket
-        if args.s3_prefix:
-            config.s3_prefix = args.s3_prefix
-        if args.local_data_dir != '.':
-            config.local_data_dir = args.local_data_dir
-        if args.local_base_pattern != 'ortho_radiology_data_':
-            config.local_base_pattern = args.local_base_pattern
-        
-        # Validate configuration
-        if config.s3_prefix and config.s3_bucket:
-            logger.info("Using S3 mode")
-        else:
-            logger.info("Using local mode - reading directly from providers file")
+        # Create configuration
+        config = NPPESConfig(
+            input_providers_file=args.input_file,
+            nppes_output_file=args.output_file,
+            limit=args.limit,
+            request_delay=args.request_delay,
+            max_retries=args.max_retries
+        )
         
         # Log configuration
-        logger.info("NPPES Configuration:")
-        logger.info(f"  S3 Bucket: {config.s3_bucket}")
-        logger.info(f"  S3 Prefix: {config.s3_prefix}")
-        logger.info(f"  Providers File: {config.local_data_dir}")
+        logger.info("NPPES Backfill Configuration:")
+        logger.info(f"  Input File: {config.input_providers_file}")
+        logger.info(f"  Output File: {config.nppes_output_file}")
         logger.info(f"  Limit: {config.limit or 'No limit'}")
         logger.info(f"  Request delay: {config.request_delay}s")
         logger.info(f"  Max retries: {config.max_retries}")
-        logger.info(f"  Batch size: {config.batch_size}")
-        logger.info(f"  Max workers: {config.max_workers}")
         
-        # Initialize NPPES manager
-        nppes_manager = NPPESDataManager(config)
+        # Initialize backfill processor
+        backfill_processor = NPPESBackfill(config)
         
-        # Run NPPES update
-        nppes_manager.run_nppes_update()
+        # Run backfill
+        backfill_processor.run_backfill()
         
     except Exception as e:
-        logger.error(f"NPPES update failed: {str(e)}")
+        logger.error(f"NPPES backfill failed: {str(e)}")
         raise
 
 if __name__ == "__main__":
