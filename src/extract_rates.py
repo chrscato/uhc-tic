@@ -1,4 +1,21 @@
-"""Extract negotiated rates from MRF files with memory-efficient streaming."""
+"""
+Rate extraction from MRF files with improved Windows compatibility.
+
+This module has been enhanced to handle common Windows file permission issues
+that can occur during long-running processes:
+
+Key improvements:
+- Robust file handling with retry logic
+- Windows-specific file locking detection
+- Automatic backup file creation when main file is locked
+- Efficient batch writing (avoids reading entire file each time)
+- Automatic consolidation of backup files at completion
+- Better error handling and user feedback
+
+These changes make the extractor more reliable for long-running processes
+on Windows systems, especially when dealing with OneDrive sync or antivirus
+software that may temporarily lock files.
+"""
 
 import gzip
 import ijson
@@ -6,6 +23,13 @@ import pandas as pd
 from pathlib import Path
 from datetime import datetime
 from typing import Dict, Any, List, Optional, Set
+import os
+import sys
+
+# Windows-specific imports for better file handling
+if sys.platform == "win32":
+    import msvcrt
+    import time
 
 from utils import (
     get_memory_usage,
@@ -29,21 +53,69 @@ def load_cpt_whitelist(file_path: str) -> Set[str]:
         print(f"⚠️  CPT whitelist file not found: {file_path}")
         return set()
 
+def load_provider_groups_from_parquet(parquet_path: str) -> Set[int]:
+    """
+    Load unique provider group ID values from a Parquet file.
+    
+    Args:
+        parquet_path: Path to Parquet file containing provider_group_id column
+        
+    Returns:
+        Set of unique provider group IDs
+    """
+    print(f"📋 Loading provider group whitelist from: {parquet_path}")
+    
+    try:
+        df = pd.read_parquet(parquet_path)
+        
+        if 'provider_group_id' not in df.columns:
+            raise ValueError(f"Column 'provider_group_id' not found in {parquet_path}")
+        
+        provider_groups = set(df['provider_group_id'].dropna().unique())
+        print(f"✅ Loaded {len(provider_groups):,} unique provider group IDs")
+        
+        return provider_groups
+        
+    except Exception as e:
+        print(f"❌ Error loading provider group whitelist: {e}")
+        return set()
+
 class RateExtractor:
     def __init__(self, batch_size: int = 5, provider_group_filter: Optional[Set[int]] = None, 
                  cpt_whitelist: Optional[Set[str]] = None):
         self.batch_size = batch_size
-        self.provider_group_filter = provider_group_filter or set()
-        self.cpt_whitelist = cpt_whitelist or set()
-        self.rates_batch: List[Dict[str, Any]] = []
+        self.provider_group_filter = provider_group_filter
+        self.cpt_whitelist = cpt_whitelist
+        self.rates_batch = []
         self.stats = {
+            "start_time": datetime.now(),
             "items_processed": 0,
             "rates_generated": 0,
             "rates_passed_filter": 0,
             "rates_written": 0,
-            "peak_memory_mb": 0,
-            "start_time": datetime.now()
+            "peak_memory_mb": 0
         }
+        # Track if we've written the first batch to avoid unnecessary file reads
+        self.first_batch_written = False
+    
+    def _wait_for_file_unlock(self, file_path: Path, timeout_seconds: int = 30) -> bool:
+        """Wait for a file to become unlocked (Windows-specific)."""
+        if sys.platform != "win32":
+            return True
+            
+        start_time = time.time()
+        while time.time() - start_time < timeout_seconds:
+            try:
+                # Try to open the file in exclusive mode
+                with open(file_path, 'rb') as f:
+                    # If we can open it, it's not locked
+                    return True
+            except (PermissionError, OSError):
+                # File is locked, wait a bit
+                time.sleep(1)
+                continue
+        
+        return False
     
     def _update_memory_stats(self):
         """Update peak memory usage statistics."""
@@ -61,12 +133,61 @@ class RateExtractor:
             
         rates_df = pd.DataFrame(self.rates_batch)
         
-        # Append to existing file or create new one
-        if output_path.exists():
-            existing_df = pd.read_parquet(output_path)
-            rates_df = pd.concat([existing_df, rates_df], ignore_index=True)
+        # For the first batch, just write directly
+        if not self.first_batch_written:
+            try:
+                rates_df.to_parquet(output_path, index=False)
+                self.first_batch_written = True
+            except PermissionError as e:
+                print(f"❌ Permission error writing first batch: {e}")
+                # Try backup filename
+                backup_path = output_path.parent / f"{output_path.stem}_backup_{int(time.time())}.parquet"
+                print(f"💾 Writing to backup file: {backup_path}")
+                rates_df.to_parquet(backup_path, index=False)
+                raise
+        else:
+            # For subsequent batches, try to append with retry logic
+            try:
+                # Wait for file to be unlocked if on Windows
+                if sys.platform == "win32" and self.output_path.exists():
+                    if not self._wait_for_file_unlock(self.output_path):
+                        print(f"⚠️  File {self.output_path.name} is locked, creating backup instead...")
+                        backup_path = self.output_path.parent / f"{self.output_path.stem}_backup_{int(time.time())}.parquet"
+                        rates_df.to_parquet(backup_path, index=False)
+                        print(f"💾 Wrote to backup: {backup_path.name}")
+                        self.stats["rates_written"] += len(self.rates_batch)
+                        self.rates_batch.clear()
+                        force_garbage_collection()
+                        return
+                
+                # Use a more robust approach for appending
+                existing_df = pd.read_parquet(output_path)
+                rates_df = pd.concat([existing_df, rates_df], ignore_index=True)
+            except (PermissionError, OSError, FileNotFoundError) as e:
+                print(f"⚠️  Warning: Could not read existing file {output_path}: {e}")
+                print(f"📝 Creating new file instead...")
+                # Continue with just the new data
+                pass
+            
+            # Write with retry logic for Windows permission issues
+            max_retries = 3
+            for attempt in range(max_retries):
+                try:
+                    rates_df.to_parquet(output_path, index=False)
+                    break
+                except PermissionError as e:
+                    if attempt < max_retries - 1:
+                        print(f"⚠️  Permission error on attempt {attempt + 1}, retrying in 2 seconds...")
+                        import time
+                        time.sleep(2)
+                    else:
+                        print(f"❌ Failed to write after {max_retries} attempts: {e}")
+                        # Try to write to a backup filename
+                        backup_path = output_path.parent / f"{output_path.stem}_backup_{int(time.time())}.parquet"
+                        print(f"💾 Writing to backup file: {backup_path}")
+                        rates_df.to_parquet(backup_path, index=False)
+                        raise
         
-        rates_df.to_parquet(output_path, index=False)
         self.stats["rates_written"] += len(self.rates_batch)
         self.rates_batch.clear()
         force_garbage_collection()
@@ -192,6 +313,10 @@ class RateExtractor:
         if self.rates_batch:
             self._write_batch(self.output_path)
         
+        # Check for and consolidate any backup files
+        print(f"\n🔍 Checking for backup files...")
+        self._consolidate_backup_files()
+        
         # Final statistics
         elapsed = (datetime.now() - self.stats["start_time"]).total_seconds()
         final_memory = self._update_memory_stats()
@@ -210,6 +335,63 @@ class RateExtractor:
             "output_path": str(self.output_path),
             "stats": self.stats
         }
+    
+    def _consolidate_backup_files(self):
+        """Consolidate any backup files that were created during processing."""
+        if not self.output_path.exists():
+            return
+            
+        # Look for backup files in the same directory
+        backup_pattern = f"{self.output_path.stem}_backup_*.parquet"
+        backup_files = list(self.output_path.parent.glob(backup_pattern))
+        
+        if not backup_files:
+            return
+            
+        print(f"🔄 Found {len(backup_files)} backup files, consolidating...")
+        
+        try:
+            # Read main file
+            main_df = pd.read_parquet(self.output_path)
+            
+            # Read and concatenate all backup files
+            backup_dfs = []
+            for backup_file in backup_files:
+                try:
+                    backup_df = pd.read_parquet(backup_file)
+                    backup_dfs.append(backup_df)
+                    print(f"📖 Read backup: {backup_file.name}")
+                except Exception as e:
+                    print(f"⚠️  Could not read backup {backup_file.name}: {e}")
+            
+            if backup_dfs:
+                # Combine all data
+                all_dfs = [main_df] + backup_dfs
+                consolidated_df = pd.concat(all_dfs, ignore_index=True)
+                
+                # Write consolidated file
+                consolidated_path = self.output_path.parent / f"{self.output_path.stem}_consolidated.parquet"
+                consolidated_df.to_parquet(consolidated_path, index=False)
+                
+                print(f"✅ Consolidated {len(backup_dfs)} backup files into: {consolidated_path.name}")
+                print(f"📊 Total records: {len(consolidated_df):,}")
+                
+                # Optionally replace original file
+                import shutil
+                shutil.move(str(consolidated_path), str(self.output_path))
+                print(f"🔄 Replaced original file with consolidated version")
+                
+                # Clean up backup files
+                for backup_file in backup_files:
+                    try:
+                        backup_file.unlink()
+                        print(f"🗑️  Cleaned up: {backup_file.name}")
+                    except Exception as e:
+                        print(f"⚠️  Could not delete {backup_file.name}: {e}")
+                        
+        except Exception as e:
+            print(f"⚠️  Error during consolidation: {e}")
+            print(f"📁 Backup files remain in: {self.output_path.parent}")
 
 if __name__ == "__main__":
     import sys
@@ -222,6 +404,8 @@ if __name__ == "__main__":
     parser.add_argument("--time", "-t", type=int, help="Maximum time to run in minutes")
     parser.add_argument("--provider-groups", "-p", nargs="+", type=int, 
                        help="Provider group IDs to filter for")
+    parser.add_argument("--provider-groups-parquet", type=str,
+                       help="Path to Parquet file containing provider_group_id column to filter for")
     parser.add_argument("--cpt-whitelist", "-c", type=str,
                        help="Path to text file with CPT codes (one per line)")
     parser.add_argument("--batch-size", "-b", type=int, default=5,

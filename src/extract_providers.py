@@ -65,14 +65,17 @@ def load_tin_whitelist(file_path: str) -> Set[str]:
         return set()
 
 class ProviderExtractor:
-    def __init__(self, batch_size: int = 1000, provider_group_whitelist: Optional[Set[int]] = None):
+    def __init__(self, batch_size: int = 1000, provider_group_whitelist: Optional[Set[int]] = None, tin_whitelist: Optional[Set[str]] = None):
         self.batch_size = batch_size
         self.provider_group_whitelist = provider_group_whitelist or set()
+        self.tin_whitelist = tin_whitelist or set()
         self.providers_batch: List[Dict[str, Any]] = []
         self.stats = {
             "providers_processed": 0,
             "providers_written": 0,
             "providers_filtered": 0,
+            "providers_filtered_by_group": 0,
+            "providers_filtered_by_tin": 0,
             "providers_examined": 0,
             "peak_memory_mb": 0,
             "start_time": datetime.now()
@@ -241,6 +244,8 @@ if __name__ == "__main__":
     parser.add_argument("--max-providers", "-m", type=int, help="Maximum number of provider groups to process")
     parser.add_argument("--provider-whitelist", "-p", type=str, 
                         help="Path to Parquet file with provider_reference_id column to use as whitelist")
+    parser.add_argument("--tin-whitelist", "-t", type=str,
+                        help="Path to text file with TIN values (one per line) to filter providers")
     parser.add_argument("--batch-size", "-b", type=int, default=1000,
                         help="Batch size for writing (default: 1000)")
     args = parser.parse_args()
