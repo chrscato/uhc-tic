@@ -105,3 +105,20 @@ wheels/
 dashboard_data/dashboard_data/
 dashboard_data/
 *.csv
+# databases / big artifacts
+*.db
+*.sqlite*
+*.parquet
+/data/
+*.log
+
+# OS/editor noise
+.DS_Store
+*.pyc
+__pycache__/
+.ipynb_checkpoints/
+
+# node/venv if applicable
+node_modules/
+.env
+venv/
