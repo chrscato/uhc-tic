@@ -17,25 +17,17 @@ st.title("Optim Health Commercial Reimbursement")
 # Helpers
 # ----------------------------
 @st.cache_data(show_spinner=False)
-def load_data(file_bytes: bytes | None, filename: str | None):
+def load_data():
     """
-    Load CSV/Parquet from upload. If nothing uploaded, try a local sample CSV (optional).
+    Load production data from prod_df.parquet file.
     """
-    if file_bytes and filename:
-        if filename.lower().endswith(".parquet"):
-            return pd.read_parquet(io.BytesIO(file_bytes))
-        elif filename.lower().endswith(".csv"):
-            # Allow big files without dtype guessing slowdown
-            return pd.read_csv(io.BytesIO(file_bytes))
-        else:
-            st.error("Please upload a CSV or Parquet file.")
-            st.stop()
-
-    # Fallback: attempt local sample (optional). Comment these two lines out if not needed.
     try:
-        return pd.read_csv("sample_combined_df.csv")
-    except Exception:
-        st.info("Upload a CSV or Parquet to begin.")
+        return pd.read_parquet("prod_df.parquet")
+    except FileNotFoundError:
+        st.error("Production data file 'prod_df.parquet' not found. Please ensure the file exists in the same directory as this app.")
+        st.stop()
+    except Exception as e:
+        st.error(f"Error loading production data: {str(e)}")
         st.stop()
 
 
@@ -166,12 +158,10 @@ def format_pct(x):
 # ----------------------------
 with st.sidebar:
     st.header("Data")
-    uploaded = st.file_uploader("Upload CSV or Parquet", type=["csv", "parquet"])
-    if uploaded is not None:
-        df = load_data(uploaded.getvalue(), uploaded.name)
-    else:
-        df = load_data(None, None)
-
+    st.info("Loading production data from prod_df.parquet")
+    
+    # Load production data
+    df = load_data()
     df = clean_data(df)
 
     # Decide code column
@@ -375,7 +365,7 @@ else:
         "negotiated_type",
         "negotiation_arrangement",
         "primary_specialty",
-        "CBSA"
+        "CSA Title"
     ]
     
     # Create the output dataframe with only priority columns
