@@ -83,6 +83,7 @@ credentials.json
 .ipynb
 # Exception for specific notebooks
 !scripts\transform_visual.ipynb
+!optim_health/prod_df.parquet
 
 # Distribution / packaging
 .Python
