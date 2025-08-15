@@ -12,6 +12,7 @@ st.set_page_config(
     layout="wide"
 )
 st.title("Optim Health Commercial Reimbursement")
+st.subheader("Physician/Professional Reimbursement Only")
 
 # ----------------------------
 # Helpers
@@ -327,31 +328,13 @@ with col4:
     filtered_count = len(working)
     st.metric("Filtered Records", filtered_count)
 
-# Chart and descriptions side by side
-left, right = st.columns([3, 2])
-with left:
-    st.subheader("Rates by Code")
-    if agg_df.empty or agg_df[code_col].nunique() == 0:
-        st.info("No rows match your filters yet. Adjust filters or add codes.")
-    else:
-        chart = build_grouped_bar_chart(agg_df, code_col=code_col)
-        st.altair_chart(chart, use_container_width=True)
-
-with right:
-    # Code descriptions table
-    if selected_codes and "description" in working.columns:
-        st.subheader("Code Descriptions")
-        desc_df = working[[code_col, "description"]].drop_duplicates().head(10)
-        if not desc_df.empty:
-            st.dataframe(
-                desc_df,
-                use_container_width=True,
-                hide_index=True,
-                column_config={
-                    code_col: st.column_config.TextColumn("Billing Code", width="medium"),
-                    "description": st.column_config.TextColumn("Description", width="large")
-                }
-            )
+# Chart only
+st.subheader("Rates by Code")
+if agg_df.empty or agg_df[code_col].nunique() == 0:
+    st.info("No rows match your filters yet. Adjust filters or add codes.")
+else:
+    chart = build_grouped_bar_chart(agg_df, code_col=code_col)
+    st.altair_chart(chart, use_container_width=True)
 
 # Summary Table (horizontal layout)
 st.subheader("Summary Table")
@@ -371,6 +354,11 @@ else:
         np.nan
     )
     
+    # Add descriptions to summary table
+    if "description" in working.columns:
+        desc_df = working[[code_col, "description"]].drop_duplicates()
+        summary_df = summary_df.merge(desc_df, on=code_col, how="left")
+    
     # Add pivot count (number of rows per code)
     pivot_counts = working[code_col].value_counts().reset_index()
     pivot_counts.columns = [code_col, "Count"]
@@ -383,10 +371,22 @@ else:
     display_summary["UHC as % of Medicare"] = display_summary["UHC as % of Medicare"].map(format_pct)
     display_summary["UHC as % of GA WC"] = display_summary["UHC as % of GA WC"].map(format_pct)
     
+    # Reorder columns to put description at the end
+    if "description" in display_summary.columns:
+        cols = [col for col in display_summary.columns if col != "description"] + ["description"]
+        display_summary = display_summary[cols]
+    
     st.dataframe(
         display_summary.reset_index(drop=True),
         use_container_width=True,
-        hide_index=True
+        hide_index=True,
+        column_config={
+            code_col: st.column_config.TextColumn(
+                "Billing Code",
+                width="medium",
+                help="Billing code - frozen column"
+            )
+        }
     )
 
 st.subheader("Detail Table")
@@ -449,12 +449,6 @@ else:
 st.markdown(
     """
     <style>
-      /* Reduce padding around charts and dataframes */
-      .stAltairChart, .stDataFrame {
-        padding: 0 !important;
-        margin: 0 !important;
-      }
-      
       /* Remove gaps between columns */
       .stHorizontalBlock {
         gap: 0 !important;
@@ -464,6 +458,69 @@ st.markdown(
         gap: 0 !important;
         margin: 0 !important;
         padding: 0 !important;
+      }
+      
+      /* Target specific horizontal blocks */
+      div[data-testid="stHorizontalBlock"] {
+        gap: 0 !important;
+      }
+      
+      div[data-testid="stHorizontalBlock"] > div {
+        gap: 0 !important;
+        margin: 0 !important;
+        padding: 0 !important;
+      }
+      
+      /* Remove padding around charts and dataframes */
+      .stAltairChart, .stDataFrame {
+        padding: 0 !important;
+        margin: 0 !important;
+      }
+      
+      /* Ensure chart and descriptions are adjacent */
+      .stHorizontalBlock > div:first-child {
+        margin-right: 0 !important;
+        padding-right: 0 !important;
+      }
+      
+      .stHorizontalBlock > div:last-child {
+        margin-left: 0 !important;
+        padding-left: 0 !important;
+      }
+      
+      /* Freeze pane for billing code column - more specific targeting */
+      .stDataFrame table thead tr th:first-child,
+      .stDataFrame table tbody tr td:first-child {
+        position: sticky !important;
+        left: 0 !important;
+        background-color: white !important;
+        z-index: 10 !important;
+        border-right: 2px solid #e0e0e0 !important;
+        box-shadow: 2px 0 5px rgba(0,0,0,0.1) !important;
+      }
+      
+      /* Ensure the frozen column header has proper styling */
+      .stDataFrame table thead tr th:first-child {
+        background-color: #f0f2f6 !important;
+        font-weight: bold !important;
+        z-index: 11 !important;
+      }
+      
+      /* Alternative targeting for different Streamlit versions */
+      div[data-testid="stDataFrame"] table thead tr th:first-child,
+      div[data-testid="stDataFrame"] table tbody tr td:first-child {
+        position: sticky !important;
+        left: 0 !important;
+        background-color: white !important;
+        z-index: 10 !important;
+        border-right: 2px solid #e0e0e0 !important;
+        box-shadow: 2px 0 5px rgba(0,0,0,0.1) !important;
+      }
+      
+      div[data-testid="stDataFrame"] table thead tr th:first-child {
+        background-color: #f0f2f6 !important;
+        font-weight: bold !important;
+        z-index: 11 !important;
       }
     </style>
     """,
