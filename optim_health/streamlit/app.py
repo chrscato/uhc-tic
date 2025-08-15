@@ -143,7 +143,7 @@ def build_grouped_bar_chart(wide_df: pd.DataFrame, code_col: str):
                             scale=alt.Scale(domain=color_domain, range=color_range)),
             xOffset=alt.XOffset("metric_label:N")
         )
-        .properties(height=300)
+        .properties(height=500)
         .interactive()
     )
     return chart
@@ -248,7 +248,7 @@ with st.sidebar:
         .tolist()
     )
 
-    st.caption("Pick up to 5 codes. You can also type codes separated by commas below.")
+    st.caption("Pick up to 10 codes. You can also type codes separated by commas below.")
     selected_codes = st.multiselect(
         "Select codes",
         options=codes_available,
@@ -259,20 +259,26 @@ with st.sidebar:
     if manual_codes.strip():
         typed = [c.strip() for c in manual_codes.split(",") if c.strip()]
         combined = list(dict.fromkeys(selected_codes + typed))  # de-dupe, keep order
-        if len(combined) > 5:
-            st.warning("You selected more than 5 codes; only the first 5 will be used.")
-            combined = combined[:5]
+        if len(combined) > 10:
+            st.warning("You selected more than 10 codes; only the first 10 will be used.")
+            combined = combined[:10]
         selected_codes = combined
     else:
-        if len(selected_codes) > 5:
-            st.warning("You selected more than 5 codes; only the first 5 will be used.")
-            selected_codes = selected_codes[:5]
+        if len(selected_codes) > 10:
+            st.warning("You selected more than 10 codes; only the first 10 will be used.")
+            selected_codes = selected_codes[:10]
         
-        # If no codes selected, pick 5 random ones
+        # If no codes selected, pick 10 random ones
         if not selected_codes and codes_available:
             import random
-            selected_codes = random.sample(codes_available, min(5, len(codes_available)))
-            st.info(f"Showing 5 random codes: {', '.join(selected_codes)}")
+            selected_codes = random.sample(codes_available, min(10, len(codes_available)))
+            st.info(f"Showing 10 random codes: {', '.join(selected_codes)}")
+            
+            # Add button to generate new random codes
+            if st.button("🎲 Generate New Random Codes"):
+                import random
+                selected_codes = random.sample(codes_available, min(10, len(codes_available)))
+                st.rerun()
 
 # ----------------------------
 # Main — Chart + Table
@@ -285,33 +291,67 @@ if selected_codes:
 # Aggregate for chart (median keeps it robust if duplicates)
 agg_df = aggregate_for_chart(working, code_col=code_col, agg="median")
 
-left, right = st.columns([1, 2])
-with left:
-    st.subheader("Current filter")
-    
+# Current filter display at top
+st.subheader("Current Filter")
+
+# Create a horizontal layout for filter info
+col1, col2, col3, col4 = st.columns(4)
+
+with col1:
     # Get the percentage range for display
     pct_range_display = None
     if 'min_pct' in locals() and 'max_pct' in locals():
         pct_range_display = f"{min_pct:.1%} - {max_pct:.1%}"
+    else:
+        pct_range_display = "(not applied)"
     
+    st.metric("UHC as % of GA WC", pct_range_display)
+
+with col2:
     # Get the description filter for display
     description_display = None
     if 'description_filter' in locals() and description_filter.strip():
         description_display = f"'{description_filter}'"
+    else:
+        description_display = "(not applied)"
     
-    st.write({
-        "UHC as % of GA WC": pct_range_display if pct_range_display else "(not applied)",
-        "Description Filter": description_display if description_display else "(not applied)",
-        "Codes": selected_codes if selected_codes else "(none selected)"
-    })
+    st.metric("Description Filter", description_display)
 
-with right:
+with col3:
+    # Show number of codes selected
+    codes_count = len(selected_codes) if selected_codes else 0
+    st.metric("Codes Selected", codes_count)
+
+with col4:
+    # Show filtered data count
+    filtered_count = len(working)
+    st.metric("Filtered Records", filtered_count)
+
+# Chart and descriptions side by side
+left, right = st.columns([3, 2])
+with left:
     st.subheader("Rates by Code")
     if agg_df.empty or agg_df[code_col].nunique() == 0:
         st.info("No rows match your filters yet. Adjust filters or add codes.")
     else:
         chart = build_grouped_bar_chart(agg_df, code_col=code_col)
         st.altair_chart(chart, use_container_width=True)
+
+with right:
+    # Code descriptions table
+    if selected_codes and "description" in working.columns:
+        st.subheader("Code Descriptions")
+        desc_df = working[[code_col, "description"]].drop_duplicates().head(10)
+        if not desc_df.empty:
+            st.dataframe(
+                desc_df,
+                use_container_width=True,
+                hide_index=True,
+                column_config={
+                    code_col: st.column_config.TextColumn("Billing Code", width="medium"),
+                    "description": st.column_config.TextColumn("Description", width="large")
+                }
+            )
 
 # Summary Table (horizontal layout)
 st.subheader("Summary Table")
@@ -409,8 +449,22 @@ else:
 st.markdown(
     """
     <style>
-      /* tighten things up just a bit */
-      .stDataFrame div[data-testid="stHorizontalBlock"] { gap: 0.5rem; }
+      /* Reduce padding around charts and dataframes */
+      .stAltairChart, .stDataFrame {
+        padding: 0 !important;
+        margin: 0 !important;
+      }
+      
+      /* Remove gaps between columns */
+      .stHorizontalBlock {
+        gap: 0 !important;
+      }
+      
+      .stHorizontalBlock > div {
+        gap: 0 !important;
+        margin: 0 !important;
+        padding: 0 !important;
+      }
     </style>
     """,
     unsafe_allow_html=True
